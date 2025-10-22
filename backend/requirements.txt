@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+alembic
+psycopg2-binary
+boto3
+requests
+python-dotenv
+python-multipart
+cryptography
+redis
+rq
+google-auth
+google-auth-oauthlib
+google-api-python-client

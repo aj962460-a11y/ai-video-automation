@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd /workspaces/ai-video-automation
+
+echo "This script only documents next steps. Do NOT run interactive commands from generators."
+cat <<'INSTRUCTIONS'
+
+Files in this workspace were generated. Run the following manually from your devcontainer:
+
+1) Create .env from example and edit:
+   cp .env.example .env
+   # open and edit .env manually to set AI_PROVIDER=pika and any local values:
+   $EDITOR .env
+
+2) Start local services:
+   docker compose -f docker-compose.dev.yml up --build -d
+
+3) Install python deps:
+   python -m pip install -r backend/requirements.txt
+
+4) (Optional) Run migrations (run only if alembic is configured):
+   cd backend
+   alembic -c alembic.ini upgrade head || true
+   cd ..
+
+5) Start backend (from repo root):
+   python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+6) Run smoke tests (see tests/smoke_tests.sh)
+
+If you want to remove this file instead:
+   rm -f scripts/create_finished_and_zip_secres
+
+INSTRUCTIONS
+
+BASE_URL="${BASE_URL:-http://localhost:8000}"
+echo "Starting smoke tests against ${BASE_URL}"
+
+echo -n "Health: "
+curl -s "${BASE_URL}/" | jq .
+
+echo -n "Generate job: "
+curl -s -X POST "${BASE_URL}/api/generate" \
+  -H "Content-Type: application/json" -d '{"prompt":"test video"}' | jq .
+
+echo -n "Job status (id=1): "
+curl -s "${BASE_URL}/api/job/1" | jq .
+
+echo -n "OAuth start (youtube): "
+curl -s "${BASE_URL}/api/auth/start/youtube" | jq .
+
+echo -n "OAuth callback mock (youtube): "
+curl -s "${BASE_URL}/api/auth/callback/youtube?code=testcode" | jq .
+
+echo -n "Post (mock): "
+curl -s -X POST "${BASE_URL}/api/post" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"youtube","media_url":"https://example.com/video.mp4","caption":"hi"}' | jq .
+
+echo -n "Monetization (demo): "
+curl -s "${BASE_URL}/api/monetization/full?provider=youtube" | jq .
+
+echo "If any test fails, collect backend logs:"
+echo "  docker compose -f docker-compose.dev.yml logs --no-color backend > /tmp/backend.logs.txt"
+echo "  cat /tmp/backend.logs.txt"
+echo "  docker compose -f docker-compose.dev.yml exec db psql -U postgres -d ai_video -c '\dt' || true"
+
+# workspace root
+cd /workspaces/ai-video-automation
+
+# show repo tree and file sizes (top level + backend)
+ls -la
+tree -L 2 || true
+du -sh * | sort -h
+
+# list zip contents and sizes
+ls -lh *.zip || true
+for z in *.zip; do echo "## $z"; unzip -l "$z" | sed -n '1,20p'; done
+
+# check key backend files and line counts
+wc -l backend/*.py || true
+sed -n '1,200p' backend/main.py || true
+
+# find recently modified files (last 24h) to see what was overwritten
+find . -type f -printf '%T@ %p\n' | sort -n | tail -n 50
+
+# restore into a directory "restore" (won't overwrite existing files)
+mkdir -p restore
+unzip ai_video_complete_full_finished.zip -d restore    # or pick another zip
+# inspect restored files
+tree -L 2 restore || true
+ls -lh restore/backend || true
+
+git status --porcelain || true
+git log --oneline -n 10 || true
+git diff --name-only HEAD@{1} HEAD || true
+
+cd /workspaces/ai-video-automation
+ls -lh *.zip
+# choose one of:
+# ai_video_complete_full_finished.zip
+# ai_video_complete_full_with_scaffold.zip
+# ai_video_complete_full.zip
+
+tree -L 2 restore || true
+ls -lh restore/backend || true
+wc -l restore/backend/*.py || true
+sed -n '1,180p' restore/backend/main.py || true
+
+# backup current backend
+mkdir -p backup
+rsync -av --delete backend/ backup/backend.saved/ || true
+rsync -av restore/backend/ backend/
+
+# run from repo root so relative imports work
+python -m uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+
+chmod +x tests/smoke_tests.sh || true
+./tests/smoke_tests.sh
+
+cd /workspaces/ai-video-automation
+cp .env.example .env
+# Open and set AI_PROVIDER=pika; DO NOT paste secrets here
+$EDITOR .env
